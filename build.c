@@ -57,4 +57,4 @@ typedef struct Context_Extra {
 // #include "oogabooga/examples/sanity_tests.c"
 
 // This is where you swap in your own project!
-// #include "entry_yourepicgamename.c"
+#include "entry_researchwizard.c"
