@@ -32,6 +32,21 @@ typedef struct World
 
 World *world = 0;
 
+typedef struct Sprite
+{
+	Gfx_Image *Image;
+	Vector2 size;
+} Sprite;
+
+Sprite sprites[SPRITE_MAX];
+Sprite *get_sprite(SpriteID id)
+{
+	if (id < 0 || id >= SPRITE_MAX)
+		return &sprites[0];
+
+	return &sprites[id];
+}
+
 Entity *entity_create()
 {
 	for (int i = 0; i < MAX_ENTITY_COUNT; i++)
@@ -67,32 +82,50 @@ void setup_slug(Entity *entity)
 	entity->spriteId = SPRITE_slug;
 }
 
-typedef struct Sprite
+#define debug
+#ifdef debug
+void debug_position(Vector2 entityPosition, Gfx_Font *font, const u32 font_height, Vector2 *printPosition, string prefix)
 {
-	Gfx_Image *Image;
-	Vector2 size;
-} Sprite;
-
-Sprite sprites[SPRITE_MAX];
-Sprite *get_sprite(SpriteID id)
-{
-	if (id < 0 || id >= SPRITE_MAX)
-		return &sprites[0];
-
-	return &sprites[id];
+	string printStr = string_concat(prefix, STR(": %f %f"), get_temporary_allocator());
+	printStr = sprint(get_temporary_allocator(), printStr, entityPosition.x, entityPosition.y);
+	draw_text(font, printStr, font_height, v2(printPosition->x, printPosition->y), v2(0.1, 0.1), COLOR_WHITE);
 }
+
+void debug_projection(Matrix4 *position, Entity *entity, Gfx_Font *font, const u32 font_height)
+{
+	Matrix4 xform = *position;
+	Matrix4 world_to_view = m4_mul(m4_scalar(1.0), m4_inverse(draw_frame.camera_xform));
+	Matrix4 view_pos = m4_mul(world_to_view, xform);
+
+	Matrix4 view_to_clip = m4_mul(m4_scalar(1.0), draw_frame.projection);
+	Matrix4 clip_pos = m4_mul(view_to_clip, view_pos);
+
+	Vector2 printPosition = v2(entity->position.x, entity->position.y - 0.1);
+	debug_position(entity->position, font, font_height, &printPosition, STR("world pos "));
+	printPosition.y -= 4.8;
+	debug_position(v2(xform.m[0][3], xform.m[1][3]), font, font_height, &printPosition, STR("xform pos "));
+	printPosition.y -= 4.8;
+	debug_position(v2(view_pos.m[0][3], view_pos.m[1][3]), font, font_height, &printPosition, STR("view pos"));
+	printPosition.y -= 4.8;
+	debug_position(v2(clip_pos.m[0][3], clip_pos.m[1][3]), font, font_height, &printPosition, STR("view pos"));
+}
+#endif
+
 int entry(int argc, char **argv)
 {
-	window.title = STR("Minimal Game Example");
+	window.title = STR("wizrd");
 	window.scaled_width = 1280; // We need to set the scaled size if we want to handle system scaling (DPI)
 	window.scaled_height = 720;
 	window.x = 200;
 	window.y = 90;
-	window.clear_color = hex_to_rgba(0xffffffff);
+	window.clear_color = hex_to_rgba(0x14093b);
 
 	// load assets
 	sprites[SPRITE_player] = (Sprite){.size = v2(7, 11), .Image = load_image_from_disk(fixed_string("../Assets/Player.png"), get_heap_allocator())};
 	sprites[SPRITE_slug] = (Sprite){.size = v2(9, 6), .Image = load_image_from_disk(fixed_string("../Assets/slug.png"), get_heap_allocator())};
+	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
+	assert(font, "Failed loading arial.ttf");
+	const u32 font_height = 48;
 
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
@@ -108,14 +141,21 @@ int entry(int argc, char **argv)
 	float64 fps = 0;
 	float64 last_time = os_get_elapsed_seconds();
 	float64 delta_time = 0;
+	float64 cameraZoom = 6.0f;
 	while (!window.should_close)
 	{
 		float64 now = os_get_elapsed_seconds();
 		delta_time = now - last_time;
 		last_time = now;
-
 		reset_temporary_storage();
 
+		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
+		draw_frame.camera_xform = m4_make_scale(v3(1 / cameraZoom, 1 / cameraZoom, 1));
+		Matrix4 clipToWorld = m4_scalar(1.0);
+		clipToWorld = m4_mul(clipToWorld, draw_frame.camera_xform); // being inversed when we draw
+		clipToWorld = m4_mul(clipToWorld, m4_inverse(draw_frame.projection));
+
+		// input reading
 		if (is_key_just_pressed(KEY_ESCAPE))
 		{
 			window.should_close = true;
@@ -138,13 +178,18 @@ int entry(int argc, char **argv)
 		{
 			input_axis.y += 1.0;
 		}
-
 		input_axis = v2_normalize(input_axis);
+
 		entity_player->position = v2_add(entity_player->position, v2_mulf(input_axis, 50 * delta_time));
 
-		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
-		float64 zoom = 6.0f;
-		draw_frame.camera_xform = m4_make_scale(v3(1 / zoom, 1 / zoom, 1));
+		// ai tick slug
+		float64 detectionDistance = 50;
+		Vector2 vectorToPlayer = v2_sub(entity_player->position, entity_slug->position);
+		if (v2_length(vectorToPlayer) <= detectionDistance) // could compare squared, but lazy
+		{
+			entity_slug->position = v2_add(entity_slug->position, v2_mulf(v2_normalize(vectorToPlayer), 15 * delta_time));
+		}
+		// todo: wander instead
 
 		// rendering
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
@@ -165,6 +210,8 @@ int entry(int argc, char **argv)
 				xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0)); // centering
 				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
 				draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
+				// trynna understand
+				// debug_projection(&xform, entity, font, font_height);
 				break;
 			}
 
@@ -185,7 +232,7 @@ int entry(int argc, char **argv)
 		os_update();
 		gfx_update();
 
-		// fps countern
+		// fps counter
 		if (fpsTime > second)
 		{
 			log("%.2f FPS", fps);
@@ -198,6 +245,5 @@ int entry(int argc, char **argv)
 			fps++;
 		}
 	}
-
 	return 0;
 }
