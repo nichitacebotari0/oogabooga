@@ -1,3 +1,7 @@
+#define debug
+
+#include "range.c"
+
 typedef enum EntityArchetype
 {
 	ARCHETYPE_nil = 0,
@@ -82,7 +86,6 @@ void setup_slug(Entity *entity)
 	entity->spriteId = SPRITE_slug;
 }
 
-#define debug
 #ifdef debug
 void debug_position(Vector2 entityPosition, Gfx_Font *font, const u32 font_height, Vector2 *printPosition, string prefix)
 {
@@ -152,7 +155,7 @@ int entry(int argc, char **argv)
 		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
 		draw_frame.camera_xform = m4_make_scale(v3(1 / cameraZoom, 1 / cameraZoom, 1));
 		Matrix4 clipToWorld = m4_scalar(1.0);
-		clipToWorld = m4_mul(clipToWorld, draw_frame.camera_xform); // being inversed when we draw
+		clipToWorld = m4_mul(clipToWorld, draw_frame.camera_xform); // its inversed when we draw
 		clipToWorld = m4_mul(clipToWorld, m4_inverse(draw_frame.projection));
 
 		// input reading
@@ -180,16 +183,30 @@ int entry(int argc, char **argv)
 		}
 		input_axis = v2_normalize(input_axis);
 
+		// tick player
 		entity_player->position = v2_add(entity_player->position, v2_mulf(input_axis, 50 * delta_time));
 
-		// ai tick slug
+		// tick slug
 		float64 detectionDistance = 50;
 		Vector2 vectorToPlayer = v2_sub(entity_player->position, entity_slug->position);
 		if (v2_length(vectorToPlayer) <= detectionDistance) // could compare squared, but lazy
 		{
 			entity_slug->position = v2_add(entity_slug->position, v2_mulf(v2_normalize(vectorToPlayer), 15 * delta_time));
 		}
-		// todo: wander instead
+
+		// collision
+		Sprite *player_sprite = get_sprite(entity_player->spriteId);
+		Range2f player_bounds = range2f_make_bottom_center(player_sprite->size);
+		player_bounds = range2f_shift(player_bounds, entity_player->position);
+
+		Sprite *slug_sprite = get_sprite(entity_slug->spriteId);
+		Range2f slug_bounds = range2f_make_bottom_center(slug_sprite->size);
+		slug_bounds = range2f_shift(slug_bounds, entity_slug->position);
+		// todo: loop of multiple entities
+		if (range2f_AABB(slug_bounds, player_bounds))
+		{
+			// todo: player take damage
+		}
 
 		// rendering
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
@@ -235,7 +252,9 @@ int entry(int argc, char **argv)
 		// fps counter
 		if (fpsTime > second)
 		{
+#ifdef debug
 			log("%.2f FPS", fps);
+#endif
 			fps = 0;
 			fpsTime -= second;
 		}
