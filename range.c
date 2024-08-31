@@ -31,6 +31,14 @@ Range2f range2f_make_bottom_center(Vector2 size)
     return range;
 }
 
+Range2f range2f_make_center(Vector2 size)
+{
+    Range2f range = {0};
+    range.max = size;
+    range = range2f_shift(range, v2(size.x * -0.5, size.y * -0.5));
+    return range;
+}
+
 Vector2 range2f_get_center(Range2f r)
 {
     return (Vector2){(r.max.x - r.min.x) * 0.5 + r.min.x, (r.max.y - r.min.y) * 0.5 + r.min.y};
@@ -68,16 +76,15 @@ bool range2f_AABB(Range2f range1, Range2f range2)
     Vector2 range1_topLeft = v2(range1.min.x, range1.max.y);
     Vector2 range1_botright = v2(range1.max.x, range1.min.y);
     Vector2 range1_topRight = range1.max;
-
     Vector2 range2_botLeft = range2.min;
     Vector2 range2_topLeft = v2(range2.min.x, range2.max.y);
     Vector2 range2_botright = v2(range2.max.x, range2.min.y);
     Vector2 range2_topRight = range2.max;
 
     bool result = range1.min.x < range2.max.x &&
-                range1.max.x > range2.min.x &&
-                range1.min.y < range2.max.y &&
-                range1.max.y > range2.min.y;
+                  range1.max.x > range2.min.x &&
+                  range1.min.y < range2.max.y &&
+                  range1.max.y > range2.min.y;
 #ifdef debug
     if (result)
     {
