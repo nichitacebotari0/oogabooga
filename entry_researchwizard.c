@@ -1,53 +1,15 @@
-#define debug
+// #define debug
 
+#include "easings.c"
 #include "range.c"
-
-typedef enum EntityArchetype
-{
-	ARCHETYPE_nil = 0,
-	ARCHETYPE_slug = 1,
-	ARCHETYPE_player = 2,
-	ARCHETYPE_projectile0 = 3,
-	ARCHETYPE_brownRock = 4,
-} EntityArchetype;
-
-typedef enum SpriteID
-{
-	SPRITE_nil,
-	SPRITE_player,
-	SPRITE_slug,
-	SPRITE_projectile0,
-	SPRITE_MAX
-} SpriteID;
-
-typedef struct Entity
-{
-	bool isValid;
-	EntityArchetype archetype;
-	Vector2 position;
-
-	bool renderSprite;
-	SpriteID spriteId;
-
-	// knockback effect or projectile velocity
-	float32 knockback_strengh;
-	float32 knockback_durationLeft;
-	Vector2 knockback_direction;
-} Entity;
+#include "entity.c"
 
 #define MAX_ENTITY_COUNT 1024
 typedef struct World
 {
 	Entity entities[MAX_ENTITY_COUNT];
 } World;
-
 World *world = 0;
-
-typedef struct Sprite
-{
-	Gfx_Image *Image;
-	Vector2 size;
-} Sprite;
 
 Sprite sprites[SPRITE_MAX];
 Sprite *get_sprite(SpriteID id)
@@ -77,28 +39,6 @@ Entity *entity_create()
 void entity_destroy(Entity *entity)
 {
 	memset(entity, 0, sizeof(Entity));
-}
-
-void setup_player(Entity *entity)
-{
-	entity->archetype = ARCHETYPE_player;
-	entity->renderSprite = true;
-	entity->spriteId = SPRITE_player;
-}
-
-void setup_slug(Entity *entity)
-{
-	entity->archetype = ARCHETYPE_slug;
-	entity->renderSprite = true;
-	entity->spriteId = SPRITE_slug;
-}
-
-void setup_projectile0(Entity *entity)
-{
-	entity->archetype = ARCHETYPE_projectile0;
-	entity->isValid = false;
-	entity->renderSprite = false;
-	entity->spriteId = SPRITE_projectile0;
 }
 
 void add_knocknack(Entity *entity, float32 strengh, float32 duration, Vector2 direction)
@@ -167,8 +107,6 @@ int entry(int argc, char **argv)
 	setup_player(entity_player);
 	Entity *entity_slug = entity_create();
 	setup_slug(entity_slug);
-	Entity *entity_projectile0 = entity_create();
-	setup_projectile0(entity_projectile0);
 
 	// game loop
 	const float32 second = 1;
@@ -229,34 +167,16 @@ int entry(int argc, char **argv)
 		// shoot ability
 		if (is_key_down(MOUSE_FIRST) && lmbCooldown <= 0)
 		{
-			lmbCooldown = 0.6;
-			entity_projectile0->position = v2_add(entity_player->position, v2_mulf(playerToMouse, 2));
-			entity_projectile0->isValid = true;
-			entity_projectile0->renderSprite = true;
-			add_knocknack(entity_projectile0, 80, 0.6, playerToMouse);
+			lmbCooldown = 0.3;
+			// todo: refactor bounds so its easier to get it and the center
+			Vector2 player_center = v2_add(entity_player->position, v2(0, get_sprite(entity_player->spriteId)->size.y / 2));
+			Vector2 projectile_spawn_pos = v2_add(player_center, v2_mulf(playerToMouse, 2));
+			Entity *entity_projectile0 = entity_create();
+			setup_projectile0(entity_projectile0, projectile_spawn_pos, 1.5, playerToMouse, easeOutQuartReverse, 150);
 		}
 		if (lmbCooldown > 0)
 		{
-			lmbCooldown -= delta_time;
-			lmbCooldown = max(lmbCooldown, 0);
-			if (lmbCooldown <= 0)
-			{
-				entity_projectile0->isValid = false;
-				entity_projectile0->renderSprite = false;
-			}
-		}
-
-		if (entity_projectile0->knockback_durationLeft > 0)
-		{
-			tick_knockback(entity_projectile0, delta_time);
-		}
-		if (entity_player->knockback_durationLeft > 0)
-		{
-			tick_knockback(entity_player, delta_time);
-		}
-		if (entity_slug->knockback_durationLeft > 0)
-		{
-			tick_knockback(entity_slug, delta_time);
+			lmbCooldown = max(0, lmbCooldown - delta_time);
 		}
 
 		// tick player
@@ -270,33 +190,67 @@ int entry(int argc, char **argv)
 			entity_slug->position = v2_add(entity_slug->position, v2_mulf(v2_normalize(slugToPlayerV2), 15 * delta_time));
 		}
 
-		// collision
+		// collision. player hit by slugs and slugs hit by projectiles
 		Sprite *player_sprite = get_sprite(entity_player->spriteId);
 		Range2f player_bounds = range2f_make_bottom_center(player_sprite->size);
 		player_bounds = range2f_shift(player_bounds, entity_player->position);
+		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
+		{
+			Entity *entity = &world->entities[i];
+			if (!entity->isValid)
+				continue;
 
-		// hit by slug
-		Sprite *slug_sprite = get_sprite(entity_slug->spriteId);
-		Range2f slug_bounds = range2f_make_bottom_center(slug_sprite->size);
-		slug_bounds = range2f_shift(slug_bounds, entity_slug->position);
-		// todo: refactor this to work for multiple entities
-		if (range2f_AABB(slug_bounds, player_bounds))
-		{
-			// todo: player take damage
-			Vector2 player_knockbackv2 = slugToPlayerV2;
-			if (fabsf(slugToPlayerV2.x) >= 0.01 && fabsf(slugToPlayerV2.y) >= 0.01)
-				add_knocknack(entity_player, 100, 0.1, slugToPlayerV2);
-		}
-		// hitting slug
-		Sprite *projectile0_sprite = get_sprite(entity_projectile0->spriteId);
-		Range2f projectile0_bounds = range2f_make_center(projectile0_sprite->size);
-		projectile0_bounds = range2f_shift(projectile0_bounds, entity_projectile0->position);
-		if (entity_projectile0->isValid && range2f_AABB(slug_bounds, projectile0_bounds))
-		{
-			Vector2 projectile0ToSlug = v2_normalize(v2_sub(entity_slug->position, entity_projectile0->position));
-			add_knocknack(entity_slug, 25, 0.1, projectile0ToSlug);
-			entity_projectile0->isValid = false;
-			entity_projectile0->renderSprite = false;
+			if (is_projectile(entity))
+			{
+				entity->lifetime_progress += delta_time;
+				float32 projectile_easing = entity->get_easing(entity->lifetime_progress / entity->lifetime_total);
+				entity->velocity = v2_mulf(entity->direction, projectile_easing * entity->projectile_acceleration * delta_time);
+				entity->position = v2_add(entity->velocity, entity->position);
+				if (entity->lifetime_progress >= entity->lifetime_total)
+				{
+					entity_destroy(entity);
+				}
+			}
+
+			if (entity->archetype == ARCHETYPE_slug)
+			{
+				Sprite *slug_sprite = get_sprite(entity->spriteId);
+				Range2f slug_bounds = range2f_make_bottom_center(slug_sprite->size);
+				slug_bounds = range2f_shift(slug_bounds, entity->position);
+				// player hit by slug
+				if (range2f_AABB(slug_bounds, player_bounds))
+				{
+					// todo: player take damage
+					Vector2 player_knockbackv2 = slugToPlayerV2;
+					if (fabsf(slugToPlayerV2.x) >= 0.01 && fabsf(slugToPlayerV2.y) >= 0.01)
+						add_knocknack(entity_player, 100, 0.1, slugToPlayerV2);
+				}
+				// slug hit by projectile
+				for (int i = 0; i < MAX_ENTITY_COUNT; i++)
+				{
+					Entity *entity_projectile0 = &world->entities[i];
+					if (!entity_projectile0->isValid || !is_projectile(entity_projectile0))
+						continue;
+
+					Sprite *projectile0_sprite = get_sprite(entity_projectile0->spriteId);
+					Range2f projectile0_bounds = range2f_make_center(projectile0_sprite->size);
+					projectile0_bounds = range2f_shift(projectile0_bounds, entity_projectile0->position);
+					if (range2f_AABB(slug_bounds, projectile0_bounds))
+					{
+						Vector2 projectile0ToSlug = v2_normalize(v2_sub(entity_slug->position, entity_projectile0->position));
+						add_knocknack(entity_slug, 45, 0.1, projectile0ToSlug);
+						entity_destroy(entity_projectile0);
+						play_one_audio_clip(STR("../Assets/footstep_snow_003.ogg"));
+						// 
+					}
+				}
+			}
+
+			// tick knockbacks
+			if (entity->knockback_durationLeft > 0)
+			{
+				tick_knockback(entity, delta_time);
+			}
 		}
 
 		// rendering
@@ -332,8 +286,6 @@ int entry(int argc, char **argv)
 				xform = m4_translate(xform, v3(sprite->size.x * -0.5, sprite->size.y * -0.5, 0)); // center
 				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
 				draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
-				// trynna understand
-				// debug_projection(&xform, entity, font, font_height);
 				break;
 			}
 

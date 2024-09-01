@@ -89,14 +89,14 @@ bool range2f_AABB(Range2f range1, Range2f range2)
     if (result)
     {
         Vector4 collidedColor = COLOR_RED;
-        collidedColor.a = 0.4;
+        collidedColor.a = 0.2;
         draw_rect(range2.min, range2f_size(range2), collidedColor);
         draw_rect(range1.min, range2f_size(range1), collidedColor);
     }
     else
     {
         Vector4 collidedColor = COLOR_RED;
-        collidedColor.a = 0.2;
+        collidedColor.a = 0.1;
         draw_rect(range2.min, range2f_size(range2), collidedColor);
         draw_rect(range1.min, range2f_size(range1), collidedColor);
     }
