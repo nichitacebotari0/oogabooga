@@ -3,7 +3,7 @@ typedef enum EntityArchetype
     ARCHETYPE_nil = 0,
     ARCHETYPE_slug = 1,
     ARCHETYPE_player = 2,
-    ARCHETYPE_projectile0 = 3,
+    ARCHETYPE_projectile = 3,
     ARCHETYPE_brownRock = 4,
 } EntityArchetype;
 
@@ -13,8 +13,18 @@ typedef enum SpriteID
     SPRITE_player,
     SPRITE_slug,
     SPRITE_projectile0,
+    SPRITE_projectile0_sheet,
     SPRITE_MAX
 } SpriteID;
+
+typedef enum EntityState
+{
+    ENTITYSTATE_nil,
+
+    // projectile states
+    ENTITYSTATE_PROJECTILE_InFlight,
+    ENTITYSTATE_PROJECTILE_Impact
+} EntityState;
 
 typedef struct Entity
 {
@@ -22,14 +32,19 @@ typedef struct Entity
     EntityArchetype archetype;
     Vector2 position;
     Vector2 velocity; // dPosition
-    // projectile stuff
-    Vector2 direction;
-    float32 lifetime_progress; // how long till isValid = false
-    float32 lifetime_total;
-    float32 projectile_acceleration;
-    float32 projectile_knockback;
-    easing_function *get_easing;
+    EntityState state;
 
+    // projectile stuff
+    Vector2 projectile_direction;
+    float32 projectile_speed;
+    float32 projectile_knockback;
+    float32 projectile_flightLifetime_total;
+    float32 projectile_flightLifetime_progress; // how long till isValid = false
+    easing_function *get_projectile_flight_easing;
+    float32 projectile_impactLifetime_total; // needed for animation of impact
+    float32 projectile_impactLifetime_progress;
+
+    // being hit
     float32 hitHighlightDurationLeft;
 
     // knockback effect to this entity
@@ -46,7 +61,14 @@ typedef struct Sprite
 {
     Gfx_Image *Image;
     Vector2 size;
+    bool isSheet;
+
 } Sprite;
+
+bool is_projectile(Entity *entity)
+{
+    return entity->archetype == ARCHETYPE_projectile;
+}
 
 void setup_player(Entity *entity)
 {
@@ -62,29 +84,31 @@ void setup_slug(Entity *entity)
     entity->spriteId = SPRITE_slug;
 }
 
-void setup_projectile0(Entity *entity, Vector2 position, float32 lifetime, Vector2 direction, easing_function *easing_func, float32 speed, float32 knockback_strengh)
+void setup_projectile0(Entity *projectile, SpriteID spriteId, Vector2 position, Vector2 projectile_direction,
+                       float32 speed, float32 knockback_strengh, easing_function *flight_easing_func,
+                       float32 flightLifetime, float32 impactLifetime)
 {
-    entity->archetype = ARCHETYPE_projectile0;
-    entity->isValid = true;
-    entity->renderSprite = true;
-    entity->spriteId = SPRITE_projectile0;
-    entity->get_easing = easing_func;
-    entity->lifetime_total = lifetime;
-    entity->lifetime_progress = 0;
-    entity->direction = v2_normalize(direction);
-    entity->position = position;
-    entity->projectile_acceleration = speed;
-    entity->projectile_knockback = knockback_strengh;
-}
+    projectile->archetype = ARCHETYPE_projectile;
+    projectile->isValid = true;
+    projectile->renderSprite = true;
+    projectile->spriteId = spriteId;
+    projectile->state = ENTITYSTATE_PROJECTILE_InFlight;
 
-bool is_projectile(Entity *entity)
-{
-    return entity->archetype == ARCHETYPE_projectile0;
+    projectile->position = position;
+    projectile->projectile_direction = v2_normalize(projectile_direction);
+    projectile->projectile_flightLifetime_total = flightLifetime;
+    projectile->projectile_flightLifetime_progress = 0;
+    projectile->projectile_impactLifetime_total = impactLifetime;
+    projectile->projectile_impactLifetime_progress = 0;
+    projectile->get_projectile_flight_easing = flight_easing_func;
+
+    projectile->projectile_speed = speed;
+    projectile->projectile_knockback = knockback_strengh;
 }
 
 float32 get_lifetime_progress(Entity *entity)
 {
-    float32 lifetime_progress = (entity->lifetime_total - entity->lifetime_progress) / entity->lifetime_total;
+    float32 lifetime_progress = (entity->projectile_flightLifetime_total - entity->projectile_flightLifetime_progress) / entity->projectile_flightLifetime_total;
     return clamp(lifetime_progress, 0, 1);
 }
 
@@ -98,6 +122,6 @@ float32 get_lifetime_progress(Entity *entity)
 // newVelocity = acceleration * delta_time + oldVelocity
 // entity->position = v2_add(
 // 	v2_add(
-// 		v2_mulf(entity->direction, (1 / 2 * projectile_acceleration * pow(delta_time, 2))),
+// 		v2_mulf(entity->projectile_direction, (1 / 2 * projectile_speed * pow(delta_time, 2))),
 // 		v2_mulf(entity->velocity, delta_time)),
 // 	entity->position);
