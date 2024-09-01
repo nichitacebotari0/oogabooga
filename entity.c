@@ -30,7 +30,9 @@ typedef struct Entity
     float32 projectile_knockback;
     easing_function *get_easing;
 
-    // knockback effect
+    float32 hitHighlightDurationLeft;
+
+    // knockback effect to this entity
     float32 knockback_strengh;
     float32 knockback_durationLeft;
     Vector2 knockback_direction;

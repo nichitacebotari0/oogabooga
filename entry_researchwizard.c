@@ -55,6 +55,17 @@ void tick_knockback(Entity *entity, float64 delta_time)
 	entity->knockback_durationLeft = max(0, entity->knockback_durationLeft);
 }
 
+// shader stuff
+#define SHADER_EFFECT_COLORCHANGE 1
+// BEWARE std140 packing:
+// https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-packing-rules
+typedef struct My_Cbuffer
+{
+	// Vector2 mouse_pos_screen; // We use this to make a light around the mouse cursor
+	Vector2 window_size; // We only use this to revert the Y in the shader because for some reason d3d11 inverts it.
+} My_Cbuffer;
+Draw_Quad *draw_image_xform_hit(Gfx_Image *image, Matrix4 xform, Vector2 size, Vector4 color);
+
 #ifdef debug
 void debug_position(Vector2 entityPosition, Gfx_Font *font, const u32 font_height, Vector2 *printPosition, string prefix)
 {
@@ -99,6 +110,20 @@ int entry(int argc, char **argv)
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
 	assert(font, "Failed loading arial.ttf");
 	const u32 font_height = 48;
+	// shader
+	string source;
+	bool ok = os_read_entire_file("shader.hlsl", &source, get_heap_allocator());
+	assert(ok, "Could not read oogabooga/examples/custom_shader.hlsl");
+	// This memory needs to stay alive throughout the frame because we pass the pointer to it in draw_frame.cbuffer.
+	// If this memory is invalidated before gfx_update after setting draw_frame.cbuffer, then gfx_update will copy
+	// memory from an invalid address.
+	My_Cbuffer cbuffer;
+
+	// This is slow and needs to recompile the shader. However, it should probably only happen once (or each hot reload)
+	// If it fails, it will return false and return to whatever shader it was before.
+	gfx_shader_recompile_with_extension(source, sizeof(My_Cbuffer));
+
+	dealloc_string(get_heap_allocator(), source);
 
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
@@ -172,7 +197,7 @@ int entry(int argc, char **argv)
 			Vector2 player_center = v2_add(entity_player->position, v2(0, get_sprite(entity_player->spriteId)->size.y / 2));
 			Vector2 projectile_spawn_pos = v2_add(player_center, v2_mulf(playerToMouse, 2));
 			Entity *entity_projectile0 = entity_create();
-			setup_projectile0(entity_projectile0, projectile_spawn_pos, 1.5, playerToMouse, easeOutQuartReverse, 150);
+			setup_projectile0(entity_projectile0, projectile_spawn_pos, 1.1, playerToMouse, easeInQuartReverse, 150, 50);
 		}
 		if (lmbCooldown > 0)
 		{
@@ -199,6 +224,7 @@ int entry(int argc, char **argv)
 			Entity *entity = &world->entities[i];
 			if (!entity->isValid)
 				continue;
+			entity->hitHighlightDurationLeft -= delta_time;
 
 			if (is_projectile(entity))
 			{
@@ -238,10 +264,11 @@ int entry(int argc, char **argv)
 					if (range2f_AABB(slug_bounds, projectile0_bounds))
 					{
 						Vector2 projectile0ToSlug = v2_normalize(v2_sub(entity_slug->position, entity_projectile0->position));
-						add_knocknack(entity_slug, 45, 0.1, projectile0ToSlug);
+						add_knocknack(entity_slug, entity_projectile0->projectile_knockback, 0.1, projectile0ToSlug);
 						entity_destroy(entity_projectile0);
-						play_one_audio_clip(STR("../Assets/footstep_snow_003.ogg"));
-						// 
+						// TODO: audio player, config position in ndc, volume, mixing?.
+						play_one_audio_clip(STR("../Assets/kenney_impact-sounds/Audio/footstep_snow_003.ogg"));
+						entity->hitHighlightDurationLeft = 0.1;
 					}
 				}
 			}
@@ -298,7 +325,10 @@ int entry(int argc, char **argv)
 				Matrix4 xform = m4_scalar(1.0);
 				xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0));
 				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
-				draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
+				if (entity->hitHighlightDurationLeft > 0)
+					draw_image_xform_hit(sprite->Image, xform, sprite->size, COLOR_WHITE);
+				else
+					draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
 			}
 			}
 		}
@@ -322,4 +352,12 @@ int entry(int argc, char **argv)
 		}
 	}
 	return 0;
+}
+
+Draw_Quad *draw_image_xform_hit(Gfx_Image *image, Matrix4 xform, Vector2 size, Vector4 color)
+{
+	Draw_Quad *q = draw_image_xform(image, xform, size, COLOR_WHITE);
+	// detail_type
+	q->userdata[0].x = SHADER_EFFECT_COLORCHANGE;
+	return q;
 }

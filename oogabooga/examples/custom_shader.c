@@ -80,7 +80,7 @@ int entry(int argc, char **argv) {
 		if (is_key_just_pressed('R')) {
 			ok = os_read_entire_file("oogabooga/examples/custom_shader.hlsl", &source, get_heap_allocator());
 			assert(ok, "Could not read oogabooga/examples/custom_shader.hlsl");
-			shader_recompile_with_extension(source, sizeof(My_Cbuffer));
+			gfx_shader_recompile_with_extension(source, sizeof(My_Cbuffer));
 			dealloc_string(get_heap_allocator(), source);
 		}
 		
