@@ -116,12 +116,3 @@ float32 get_lifetime_progress(Entity *entity)
 //     Vector2 Position;
 //     Vector2 dPosition; // AKA velocity
 // } A;
-
-// motion equations
-// newPosition =  1/2 * acceleration * delta_time^2 + oldVelocity * delta_time + oldPosition = 1/2*a*t^2 + v*t + p
-// newVelocity = acceleration * delta_time + oldVelocity
-// entity->position = v2_add(
-// 	v2_add(
-// 		v2_mulf(entity->projectile_direction, (1 / 2 * projectile_speed * pow(delta_time, 2))),
-// 		v2_mulf(entity->velocity, delta_time)),
-// 	entity->position);
