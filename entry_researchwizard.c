@@ -107,13 +107,19 @@ int entry(int argc, char **argv)
 	window.fullscreen = false;
 	window.clear_color = hex_to_rgba(0x14093b);
 
-	// load assets
+#pragma region Load Assets
 	sprites[SPRITE_player] = (Sprite){.size = v2(7, 11), .Image = load_image_from_disk(fixed_string("../Assets/Player.png"), get_heap_allocator())};
 	sprites[SPRITE_slug] = (Sprite){.size = v2(9, 6), .Image = load_image_from_disk(fixed_string("../Assets/slug.png"), get_heap_allocator())};
 	sprites[SPRITE_projectile0] = (Sprite){.size = v2(7, 7), .Image = load_image_from_disk(fixed_string("../Assets/projectile0.png"), get_heap_allocator())};
-	sprites[SPRITE_projectile0_sheet] = (Sprite){.size = v2(28, 7), .Image = load_image_from_disk(fixed_string("../Assets/projectile0_sheet.png"), get_heap_allocator())};
-	assert(sprites[SPRITE_projectile0_sheet].Image, "load");
-	// hacky way to avoid  stutter on audio load
+
+	{
+		Gfx_Image *projectile0_sheet = load_image_from_disk(fixed_string("../Assets/projectile0_sheet.png"), get_heap_allocator());
+		assert(projectile0_sheet, "load");
+		sprites[SPRITE_projectile0_sheet] = (Sprite){.size = v2(28, 7), .Image = projectile0_sheet};
+		setup_spriteSheet(&sprites[SPRITE_projectile0_sheet], 1, 4, 0, 1, 0, 3, 6);
+	}
+
+	// hacky way to avoid stutter on audio load
 	{
 		Audio_Playback_Config audio_player_config = {0};
 		audio_player_config.volume = 0.001;
@@ -124,6 +130,7 @@ int entry(int argc, char **argv)
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
 	assert(font, "Failed loading arial.ttf");
 	const u32 font_height = 48;
+#pragma endregion Load Assets
 
 #pragma region shaderinit
 	string source;
@@ -247,7 +254,6 @@ int entry(int argc, char **argv)
 		entity_player->velocity = v2_add(
 			v2_mulf(player_acceleration, delta_time),
 			entity_player->velocity);
-
 #pragma endregion tickPlayer
 
 		// tick slug
@@ -373,67 +379,15 @@ int entry(int argc, char **argv)
 				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
 				if (entity->state == ENTITYSTATE_PROJECTILE_Impact)
 				{
-					// TODO: refactor this into sprite struct and a method
 					Sprite *sheet_sprite = get_sprite(SPRITE_projectile0_sheet);
-					Gfx_Image *anim_sheet = sheet_sprite->Image;
 					// animate impact
-					// Configure information about the whole image as a sprite sheet
-					u32 number_of_columns = 4;
-					u32 number_of_rows = 1;
-					u32 total_number_of_frames = number_of_rows * number_of_columns;
-
-					u32 anim_frame_width = anim_sheet->width / number_of_columns;
-					u32 anim_frame_height = anim_sheet->height / number_of_rows;
-
-					// Configure the animation by setting the start & end frames in the grid of frames
-					// (Inspect sheet image and count the frame indices you want)
-					// In sprite sheet animations, it usually goes down. So Y 0 is actuall the top of the
-					// sprite sheet, and +Y is down on the sprite sheet.
-					u32 anim_start_frame_col = 1;
-					u32 anim_start_frame_row = 0;
-					u32 anim_end_frame_col = 3;
-					u32 anim_end_frame_row = 0;
-					u32 anim_start_index = anim_start_frame_row * number_of_columns + anim_start_frame_col;
-					u32 anim_end_index = anim_end_frame_row * number_of_columns + anim_end_frame_col;
-					u32 anim_number_of_frames = anim_end_index - anim_start_index + 1;
-
-					// Sanity check configuration
-					assert(anim_end_index > anim_start_index, "The last frame must come before the first frame");
-					assert(anim_start_frame_col < number_of_columns, "anim_start_frame_x is out of bounds");
-					assert(anim_start_frame_row < number_of_rows, "anim_start_frame_y is out of bounds");
-					assert(anim_end_frame_col < number_of_columns, "anim_end_frame_x is out of bounds");
-					assert(anim_end_frame_row < number_of_rows, "anim_end_frame_y is out of bounds");
-
-					// Calculate duration per frame in seconds
-					float32 playback_fps = 6;
-					float32 anim_time_per_frame = 1.0 / playback_fps;
-					float32 anim_duration = anim_time_per_frame * (float32)anim_number_of_frames;
-
-					// Float modulus to "loop" around the timer over the anim duration
-					// float32 anim_elapsed = fmodf(entity->projectile_impactLifetime_progress, anim_duration);
-					float32 anim_elapsed = min(entity->projectile_impactLifetime_progress / anim_duration, anim_duration - 0.001);
-					// Get current progression in animation from 0.0 to 1.0
-					float32 anim_progression_factor = anim_elapsed / anim_duration;
-
-					u32 anim_current_index = anim_number_of_frames * anim_progression_factor;
-					u32 anim_absolute_index_in_sheet = anim_start_index + anim_current_index;
-
-					u32 anim_index_x = anim_absolute_index_in_sheet % number_of_columns;
-					u32 anim_index_y = anim_absolute_index_in_sheet / number_of_columns + 1;
-
-					u32 anim_sheet_pos_x = anim_index_x * anim_frame_width;
-					u32 anim_sheet_pos_y = (number_of_rows - anim_index_y) * anim_frame_height; // Remember, Y inverted.
-
-					// Draw the sprite sheet, with the uv box for the current frame.
-					// Uv box is a Vector4 of x1, y1, x2, y2 where each value is a percentage value 0.0 to 1.0
-					// from left to right / bottom to top in the texture.
-
-					Draw_Quad *quad = draw_image_xform(anim_sheet, xform, v2(7, 7), COLOR_WHITE);
-					quad->uv.x1 = (float32)(anim_sheet_pos_x) / (float32)anim_sheet->width;
-					quad->uv.y1 = (float32)(anim_sheet_pos_y) / (float32)anim_sheet->height;
-					quad->uv.x2 = (float32)(anim_sheet_pos_x + anim_frame_width) / (float32)anim_sheet->width;
-					quad->uv.y2 = (float32)(anim_sheet_pos_y + anim_frame_height) / (float32)anim_sheet->height;
-					// draw_image_xform_hit(sprite->Image, xform, sprite->size, COLOR_RED);
+					float32 animation_progress = entity->projectile_impactLifetime_progress / entity->projectile_impactLifetime_total;
+					SpriteUV uvs = get_sprite_animation_uv(sheet_sprite, animation_progress);
+					Draw_Quad *quad = draw_image_xform(sheet_sprite->Image, xform, v2(7, 7), COLOR_WHITE);
+					quad->uv.x1 = uvs.start.x;
+					quad->uv.y1 = uvs.start.y;
+					quad->uv.x2 = uvs.end.x;
+					quad->uv.y2 = uvs.end.y;
 					break;
 				}
 				draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
