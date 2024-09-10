@@ -10,6 +10,7 @@ typedef enum EntityArchetype
 typedef enum SpriteID
 {
     SPRITE_nil,
+    SPRITE_rectangle,
     SPRITE_player,
     SPRITE_slug,
     SPRITE_projectile0,
@@ -49,8 +50,8 @@ typedef struct Entity
     Vector2 velocity; // dPosition
     Vector2 facingDirection;
     EntityState state;
-
-    // player stuff
+    float32 Health;
+    float32 MaxHealth;
 
     // projectile stuff
     Vector2 projectile_direction;
@@ -111,6 +112,8 @@ bool is_projectile(Entity *entity)
 
 void setup_player(Entity *entity)
 {
+    entity->Health = 100;
+    entity->MaxHealth = 100;
     entity->archetype = ARCHETYPE_player;
     entity->renderSprite = true;
     entity->facingDirection = v2(1, 0);
@@ -148,6 +151,8 @@ void player_stateTransition(Entity *entity, EntityState targetState)
 
 void setup_slug(Entity *entity)
 {
+    entity->Health = 100;
+    entity->MaxHealth = 100;
     entity->archetype = ARCHETYPE_slug;
     entity->renderSprite = true;
     entity->spriteId = SPRITE_slug;

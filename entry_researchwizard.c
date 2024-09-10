@@ -140,6 +140,11 @@ int entry(int argc, char **argv)
 		sprites[SPRITE_projectile0_sheet] = (Sprite){.size = v2(28, 7), .Image = projectile0_sheet};
 		setup_spriteSheet(&sprites[SPRITE_projectile0_sheet], 1, 4, 0, 1, 0, 3, 6);
 	}
+	{
+		Gfx_Image *rectangle = load_image_from_disk(fixed_string("../Assets/rectangle.png"), get_heap_allocator());
+		sprites[SPRITE_rectangle] = (Sprite){.size = v2(12, 3), .Image = rectangle};
+	}
+
 	// hacky way to avoid stutter on audio load
 	{
 		Audio_Playback_Config audio_player_config = {0};
@@ -188,15 +193,15 @@ int entry(int argc, char **argv)
 	float64 lmbCooldown = 0.3;
 	float64 lmbCooldownLeft = 0;
 	// dash
-	float32 dashCooldown = 0.1;
+	float32 dashCooldown = 0.35;
 	float32 dashCooldownLeft = 0;
 	Vector2 dashInitialPosition = v2(1, 0);
 	Vector2 dashTarget = v2(1, 0);
 	float32 dashStartedAt = 0;
-	float32 dashDistance = 100;
-	float32 dashFlightDuration = 0.3;
+	float32 dashDistance = 80;
+	float32 dashFlightDuration = 0.2;
 	float32 dashHighlight1Start = 0;
-	float32 dashHighlight2Start = 0.36;
+	float32 dashHighlight2Start = 0.17;
 	float32 dashHighlightDuration = 0.05;
 	float32 dashDuration = dashHighlight2Start + dashHighlightDuration;
 
@@ -222,11 +227,10 @@ int entry(int argc, char **argv)
 		draw_frame.projection = m4_make_orthographic_projection(window.width * -0.5, window.width * 0.5, window.height * -0.5, window.height * 0.5, -1, 10);
 		// WARNING: camera offset effect achieved without full understanding of why it works
 		// todo: make toggleable, figure out if this ruins aiming
-		Vector3 cameraOffsetTargetPos = v3(mouse_ndc_x * -50, mouse_ndc_y * -50, 0);
-		draw_frame.projection = m4_translate(draw_frame.projection, cameraOffsetTargetPos);
+		// Vector3 cameraOffsetTargetPos = v3(mouse_ndc_x * -50, mouse_ndc_y * -50, 0);
+		// draw_frame.projection = m4_translate(draw_frame.projection, cameraOffsetTargetPos);
 
 		animate_v2_to_target(&cameraPosition, entity_player->position, delta_time, 15);
-		log("%.2f %.2f", cameraPosition.x, cameraPosition.y);
 		draw_frame.camera_xform = m4_translate(draw_frame.camera_xform, v3(cameraPosition.x, cameraPosition.y, 0));
 		draw_frame.camera_xform = m4_scale(draw_frame.camera_xform, v3(1 / cameraZoom, 1 / cameraZoom, 1));
 		// calculate after all projections applied
@@ -401,6 +405,7 @@ int entry(int argc, char **argv)
 						play_one_audio_clip(STR("../Assets/kenney_impact-sounds/Audio/footstep_snow_003.ogg"));
 						entity_projectile->state = ENTITYSTATE_PROJECTILE_Impact;
 						entity->hitHighlightDurationLeft = 0.1;
+						entity->Health -= 1;
 					}
 				}
 			}
@@ -503,6 +508,15 @@ int entry(int argc, char **argv)
 				Draw_Quad *quad = draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
 				if (entity->hitHighlightDurationLeft > 0)
 					shader_set_highlight(quad);
+
+				// draw hp bar
+				Sprite *healthBarSprite = get_sprite(SPRITE_rectangle);
+				xform = m4_translate(xform, v3(0, -healthBarSprite->size.y - 0.5, 0));
+				const float healthPercentage = entity->Health / entity->MaxHealth;
+				draw_rect_xform(xform, v2(healthBarSprite->size.x, healthBarSprite->size.y), COLOR_WHITE);
+				// draw_image_xform(healthBarSprite->Image, xform, healthBarSprite->size, COLOR_WHITE);
+				xform = m4_translate(xform, v3(0.1, 0.1, 0));
+				draw_rect_xform(xform, v2((healthBarSprite->size.x - 0.2) * healthPercentage, healthBarSprite->size.y - 0.2), COLOR_RED);
 			}
 			}
 		}
