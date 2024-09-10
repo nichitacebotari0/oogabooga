@@ -23,16 +23,34 @@ typedef enum EntityState
 
     // projectile states
     ENTITYSTATE_PROJECTILE_InFlight,
-    ENTITYSTATE_PROJECTILE_Impact
+    ENTITYSTATE_PROJECTILE_Impact,
+
+    // time to make the most scuffed FSM in existence
+
+    // player dash states
+    ENTITYSTATE_PLAYER_FreeMove,
+    ENTITYSTATE_PLAYER_Dash,
+    // ENTITYSTATE_PLAYER_Dash_Init,
+    // ENTITYSTATE_PLAYER_Dash_InTravel,
+    // ENTITYSTATE_PLAYER_Dash_Ending,
 } EntityState;
 
+struct EntityStateEffect
+{
+
+} EntityStateEffect;
+
+#pragma region entity
 typedef struct Entity
 {
     bool isValid;
     EntityArchetype archetype;
     Vector2 position;
     Vector2 velocity; // dPosition
+    Vector2 facingDirection;
     EntityState state;
+
+    // player stuff
 
     // projectile stuff
     Vector2 projectile_direction;
@@ -45,6 +63,8 @@ typedef struct Entity
     float32 projectile_impactLifetime_progress;
 
     // being hit
+    bool canCollide;
+    bool isInvincible;
     float32 hitHighlightDurationLeft;
 
     // knockback effect to this entity
@@ -56,7 +76,9 @@ typedef struct Entity
     SpriteID spriteId;
 
 } Entity;
+#pragma endregion entity
 
+#pragma region sprite
 typedef struct Sprite
 {
     Gfx_Image *Image;
@@ -80,6 +102,86 @@ typedef struct SpriteUV
     Vector2 start;
     Vector2 end;
 } SpriteUV;
+#pragma endregion sprite
+
+bool is_projectile(Entity *entity)
+{
+    return entity->archetype == ARCHETYPE_projectile;
+}
+
+void setup_player(Entity *entity)
+{
+    entity->archetype = ARCHETYPE_player;
+    entity->renderSprite = true;
+    entity->facingDirection = v2(1, 0);
+    entity->spriteId = SPRITE_player;
+    entity->state = ENTITYSTATE_PLAYER_FreeMove;
+    entity->canCollide = true;
+}
+
+void player_stateTransition(Entity *entity, EntityState targetState)
+{
+    if (entity->state == ENTITYSTATE_PLAYER_FreeMove)
+    {
+        if (targetState == ENTITYSTATE_PLAYER_Dash)
+        {
+            entity->state = ENTITYSTATE_PLAYER_Dash;
+            entity->isInvincible = true;
+            entity->canCollide = false;
+            return;
+        }
+    }
+
+    if (entity->state == ENTITYSTATE_PLAYER_Dash)
+    {
+        if (targetState == ENTITYSTATE_PLAYER_FreeMove)
+        {
+            entity->state = ENTITYSTATE_PLAYER_FreeMove;
+            entity->isInvincible = false;
+            entity->canCollide = true;
+            return;
+        }
+    }
+
+    assert(false, "unsupported player state transition");
+}
+
+void setup_slug(Entity *entity)
+{
+    entity->archetype = ARCHETYPE_slug;
+    entity->renderSprite = true;
+    entity->spriteId = SPRITE_slug;
+    entity->canCollide = true;
+}
+
+void setup_projectile0(Entity *projectile, SpriteID spriteId, Vector2 position, Vector2 projectile_direction,
+                       float32 speed, float32 knockback_strengh, easing_function *flight_easing_func,
+                       float32 flightLifetime, float32 impactLifetime)
+{
+    projectile->archetype = ARCHETYPE_projectile;
+    projectile->isValid = true;
+    projectile->renderSprite = true;
+    projectile->canCollide = true;
+    projectile->spriteId = spriteId;
+    projectile->state = ENTITYSTATE_PROJECTILE_InFlight;
+
+    projectile->position = position;
+    projectile->projectile_direction = v2_normalize(projectile_direction);
+    projectile->projectile_flightLifetime_total = flightLifetime;
+    projectile->projectile_flightLifetime_progress = 0;
+    projectile->projectile_impactLifetime_total = impactLifetime;
+    projectile->projectile_impactLifetime_progress = 0;
+    projectile->get_projectile_flight_easing = flight_easing_func;
+
+    projectile->projectile_speed = speed;
+    projectile->projectile_knockback = knockback_strengh;
+}
+
+float32 get_lifetime_progress(Entity *entity)
+{
+    float32 lifetime_progress = (entity->projectile_flightLifetime_total - entity->projectile_flightLifetime_progress) / entity->projectile_flightLifetime_total;
+    return clamp(lifetime_progress, 0, 1);
+}
 
 /// Configure the animation by setting the start & end frames in the grid of frames
 /// (Inspect sheet image and count the frame indices you want)
@@ -138,55 +240,3 @@ SpriteUV get_sprite_animation_uv(Sprite *sprite, float32 animation_progress)
 
     return result;
 }
-
-bool is_projectile(Entity *entity)
-{
-    return entity->archetype == ARCHETYPE_projectile;
-}
-
-void setup_player(Entity *entity)
-{
-    entity->archetype = ARCHETYPE_player;
-    entity->renderSprite = true;
-    entity->spriteId = SPRITE_player;
-}
-
-void setup_slug(Entity *entity)
-{
-    entity->archetype = ARCHETYPE_slug;
-    entity->renderSprite = true;
-    entity->spriteId = SPRITE_slug;
-}
-
-void setup_projectile0(Entity *projectile, SpriteID spriteId, Vector2 position, Vector2 projectile_direction,
-                       float32 speed, float32 knockback_strengh, easing_function *flight_easing_func,
-                       float32 flightLifetime, float32 impactLifetime)
-{
-    projectile->archetype = ARCHETYPE_projectile;
-    projectile->isValid = true;
-    projectile->renderSprite = true;
-    projectile->spriteId = spriteId;
-    projectile->state = ENTITYSTATE_PROJECTILE_InFlight;
-
-    projectile->position = position;
-    projectile->projectile_direction = v2_normalize(projectile_direction);
-    projectile->projectile_flightLifetime_total = flightLifetime;
-    projectile->projectile_flightLifetime_progress = 0;
-    projectile->projectile_impactLifetime_total = impactLifetime;
-    projectile->projectile_impactLifetime_progress = 0;
-    projectile->get_projectile_flight_easing = flight_easing_func;
-
-    projectile->projectile_speed = speed;
-    projectile->projectile_knockback = knockback_strengh;
-}
-
-float32 get_lifetime_progress(Entity *entity)
-{
-    float32 lifetime_progress = (entity->projectile_flightLifetime_total - entity->projectile_flightLifetime_progress) / entity->projectile_flightLifetime_total;
-    return clamp(lifetime_progress, 0, 1);
-}
-
-// typedef struct MotionResult {
-//     Vector2 Position;
-//     Vector2 dPosition; // AKA velocity
-// } A;
