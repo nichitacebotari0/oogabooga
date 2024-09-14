@@ -3,36 +3,10 @@
 #include "easings.c"
 #include "range.c"
 #include "entity.c"
+#include "state.c"
+#include "utils.c"
 
-bool almost_equals(float a, float b, float epsilon)
-{
-	return fabs(a - b) <= epsilon;
-}
-
-bool animate_f32_to_target(float *value, float target, float delta_t, float rate)
-{
-	*value += (target - *value) * (1.0 - pow(2.0f, -rate * delta_t));
-	if (almost_equals(*value, target, 0.001f))
-	{
-		*value = target;
-		return true;
-	}
-	return false;
-}
-
-bool animate_v2_to_target(Vector2 *value, Vector2 target, float delta_t, float rate)
-{
-	return animate_f32_to_target(&(value->x), target.x, delta_t, rate) &
-		   animate_f32_to_target(&(value->y), target.y, delta_t, rate);
-}
-
-#define MAX_ENTITY_COUNT 1024
-typedef struct World
-{
-	Entity entities[MAX_ENTITY_COUNT];
-} World;
 World *world = 0;
-
 Sprite sprites[SPRITE_MAX];
 Sprite *get_sprite(SpriteID id)
 {
@@ -63,22 +37,6 @@ void entity_destroy(Entity *entity)
 	memset(entity, 0, sizeof(Entity));
 }
 
-void add_knocknack(Entity *entity, float32 strengh, float32 duration, Vector2 direction)
-{
-	if (fabsf(direction.x) < 0.01 && fabsf(direction.y) < 0.01)
-		return;
-	entity->knockback_strengh = strengh;
-	entity->knockback_durationLeft = duration;
-	entity->knockback_direction = v2_normalize(direction);
-}
-
-void tick_knockback(Entity *entity, float64 delta_time)
-{
-	entity->position = v2_add(entity->position, v2_mulf(entity->knockback_direction, entity->knockback_strengh * delta_time));
-	entity->knockback_durationLeft -= delta_time;
-	entity->knockback_durationLeft = max(0, entity->knockback_durationLeft);
-}
-
 // shader stuff
 #define SHADER_EFFECT_COLORCHANGE 1
 // BEWARE std140 packing:
@@ -89,6 +47,9 @@ typedef struct Shader_ConstantsBuffer
 } Shader_ConstantsBuffer;
 void shader_set_highlight(Draw_Quad *quad);
 Draw_Quad *draw_image_xform_sheet_animated(Sprite *sheet_sprite, Matrix4 xform, float32 animation_progress);
+void DrawHealthBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage);
+void DrawEntityHealthBar(Entity *entity, Matrix4 xform);
+void RenderWorld(World *world, Vector2 entity_player_position, float64 now, float64 delta_time);
 
 #ifdef debug
 void debug_position(Vector2 entityPosition, Gfx_Font *font, const u32 font_height, Vector2 *printPosition, string prefix)
@@ -140,17 +101,14 @@ int entry(int argc, char **argv)
 		sprites[SPRITE_projectile0_sheet] = (Sprite){.size = v2(28, 7), .Image = projectile0_sheet};
 		setup_spriteSheet(&sprites[SPRITE_projectile0_sheet], 1, 4, 0, 1, 0, 3, 6);
 	}
-	{
-		Gfx_Image *rectangle = load_image_from_disk(fixed_string("../Assets/rectangle.png"), get_heap_allocator());
-		sprites[SPRITE_rectangle] = (Sprite){.size = v2(12, 3), .Image = rectangle};
-	}
 
+	string kenney_impact_snow03 = STR("../Assets/kenney_impact-sounds/Audio/footstep_snow_003.ogg");
 	// hacky way to avoid stutter on audio load
 	{
 		Audio_Playback_Config audio_player_config = {0};
 		audio_player_config.volume = 0.001;
 		audio_player_config.playback_speed = 9999.0;
-		play_one_audio_clip_with_config(STR("../Assets/kenney_impact-sounds/Audio/footstep_snow_003.ogg"), audio_player_config);
+		play_one_audio_clip_with_config(kenney_impact_snow03, audio_player_config);
 	}
 
 	Gfx_Font *font = load_font_from_disk(STR("C:/windows/fonts/arial.ttf"), get_heap_allocator());
@@ -174,6 +132,7 @@ int entry(int argc, char **argv)
 
 	world = alloc(get_heap_allocator(), sizeof(World));
 	memset(world, 0, sizeof(World));
+	setup_world(world);
 
 	Entity *entity_player = entity_create();
 	setup_player(entity_player);
@@ -186,27 +145,7 @@ int entry(int argc, char **argv)
 	float64 fps = 0;
 	float64 last_time = os_get_elapsed_seconds();
 	float64 delta_time = 0;
-	float64 cameraZoom = 6.0f;
-	Vector2 cameraPosition = v2(0, 0);
 
-	// lmb
-	float64 lmbCooldown = 0.3;
-	float64 lmbCooldownLeft = 0;
-	// dash
-	float32 dashCooldown = 0.35;
-	float32 dashCooldownLeft = 0;
-	Vector2 dashInitialPosition = v2(1, 0);
-	Vector2 dashTarget = v2(1, 0);
-	float32 dashStartedAt = 0;
-	float32 dashDistance = 80;
-	float32 dashFlightDuration = 0.2;
-	float32 dashHighlight1Start = 0;
-	float32 dashHighlight2Start = 0.17;
-	float32 dashHighlightDuration = 0.05;
-	float32 dashDuration = dashHighlight2Start + dashHighlightDuration;
-
-	float64 playerSpeed = 900;
-	float32 dragForce = 8.3;
 	while (!window.should_close)
 	{
 		float64 now = os_get_elapsed_seconds();
@@ -230,9 +169,9 @@ int entry(int argc, char **argv)
 		// Vector3 cameraOffsetTargetPos = v3(mouse_ndc_x * -50, mouse_ndc_y * -50, 0);
 		// draw_frame.projection = m4_translate(draw_frame.projection, cameraOffsetTargetPos);
 
-		animate_v2_to_target(&cameraPosition, entity_player->position, delta_time, 15);
-		draw_frame.camera_xform = m4_translate(draw_frame.camera_xform, v3(cameraPosition.x, cameraPosition.y, 0));
-		draw_frame.camera_xform = m4_scale(draw_frame.camera_xform, v3(1 / cameraZoom, 1 / cameraZoom, 1));
+		animate_v2_to_target(&world->cameraPosition, entity_player->position, delta_time, 15);
+		draw_frame.camera_xform = m4_translate(draw_frame.camera_xform, v3(world->cameraPosition.x, world->cameraPosition.y, 0));
+		draw_frame.camera_xform = m4_scale(draw_frame.camera_xform, v3(1 / world->cameraZoom, 1 / world->cameraZoom, 1));
 		// calculate after all projections applied
 		Matrix4 clipToWorld = m4_scalar(1.0);
 		clipToWorld = m4_mul(clipToWorld, draw_frame.camera_xform); // its inversed when we draw
@@ -266,40 +205,40 @@ int entry(int argc, char **argv)
 		input_axis = v2_normalize(input_axis);
 
 		// shoot ability
-		if (is_key_down(MOUSE_FIRST) && lmbCooldownLeft <= 0 && entity_player->state == ENTITYSTATE_PLAYER_FreeMove)
+		if (is_key_down(MOUSE_FIRST) && world->lmbCooldownLeft <= 0 && entity_player->state == ENTITYSTATE_PLAYER_FreeMove)
 		{
-			lmbCooldownLeft = lmbCooldown;
+			world->lmbCooldownLeft = world->lmbCooldown;
 			// todo: refactor bounds so its easier to get it and the center
 			Vector2 player_center = v2_add(entity_player->position, v2(0, get_sprite(entity_player->spriteId)->size.y / 2));
 			Vector2 projectile_spawn_pos = v2_add(player_center, v2_mulf(playerToMouse, 2));
 			Entity *entity_projectile0 = entity_create();
-			setup_projectile0(entity_projectile0, SPRITE_projectile0, projectile_spawn_pos, playerToMouse, 150, 50, easeInQuartReverse, 1.1, 0.2);
+			setup_projectile0(entity_projectile0, SPRITE_projectile0, projectile_spawn_pos, playerToMouse, 150, 50, easeInQuartReverse, 1.1, 0.2, TEAM_1);
 		}
-		if (lmbCooldownLeft > 0)
+		if (world->lmbCooldownLeft > 0)
 		{
-			lmbCooldownLeft = max(0, lmbCooldownLeft - delta_time);
+			world->lmbCooldownLeft = max(0, world->lmbCooldownLeft - delta_time);
 		}
 		// dash ability
-		if (is_key_down(KEY_SHIFT) && dashCooldownLeft <= 0)
+		if (is_key_down(KEY_SHIFT) && world->dashCooldownLeft <= 0)
 		{
 			player_stateTransition(entity_player, ENTITYSTATE_PLAYER_Dash);
-			dashCooldownLeft = dashCooldown;
-			dashStartedAt = now;
-			dashInitialPosition = entity_player->position;
-			dashTarget = v2_length(input_axis) > 0.01 ? v2_mulf(input_axis, dashDistance) : v2_mulf(entity_player->facingDirection, dashDistance);
-			dashTarget = v2_add(dashTarget, dashInitialPosition);
+			world->dashCooldownLeft = world->dashCooldown;
+			world->dashStartedAt = now;
+			world->dashInitialPosition = entity_player->position;
+			world->dashTarget = v2_length(input_axis) > 0.01 ? v2_mulf(input_axis, world->dashDistance) : v2_mulf(entity_player->facingDirection, world->dashDistance);
+			world->dashTarget = v2_add(world->dashTarget, world->dashInitialPosition);
 		}
-		if (dashCooldownLeft > 0 && entity_player->state == ENTITYSTATE_PLAYER_FreeMove)
+		if (world->dashCooldownLeft > 0 && entity_player->state == ENTITYSTATE_PLAYER_FreeMove)
 		{
-			dashCooldownLeft = max(0, dashCooldownLeft - delta_time);
+			world->dashCooldownLeft = max(0, world->dashCooldownLeft - delta_time);
 		}
 
 		if (entity_player->state == ENTITYSTATE_PLAYER_FreeMove)
 		{
 			entity_player->facingDirection = input_axis;
-			Vector2 player_acceleration = v2_mulf(input_axis, playerSpeed);
+			Vector2 player_acceleration = v2_mulf(input_axis, world->playerSpeed);
 			// simulate drag
-			Vector2 drag = v2_mulf(v2(-entity_player->velocity.x, -entity_player->velocity.y), dragForce);
+			Vector2 drag = v2_mulf(v2(-entity_player->velocity.x, -entity_player->velocity.y), world->dragForce);
 			player_acceleration = v2_add(player_acceleration, drag);
 
 			// newPosition = 1/2*a*t^2 + v*t + p = 1/2 * acceleration * delta_time^2 + oldVelocity * delta_time + oldPosition
@@ -315,17 +254,17 @@ int entry(int argc, char **argv)
 		}
 		else if (entity_player->state == ENTITYSTATE_PLAYER_Dash)
 		{
-			float32 dashTimeProgress = (now - dashStartedAt);
-			if (dashTimeProgress >= dashDuration)
+			float32 dashTimeProgress = (now - world->dashStartedAt);
+			if (dashTimeProgress >= world->dashDuration)
 			{
 				player_stateTransition(entity_player, ENTITYSTATE_PLAYER_FreeMove);
 			}
 			else
 			{
-				if (dashTimeProgress < dashFlightDuration)
+				if (dashTimeProgress < world->dashFlightDuration)
 				{
-					Vector2 dashTrajectory = v2_sub(dashTarget, dashInitialPosition);
-					entity_player->position = v2_add(dashInitialPosition, v2_mulf(dashTrajectory, dashTimeProgress / dashFlightDuration));
+					Vector2 dashTrajectory = v2_sub(world->dashTarget, world->dashInitialPosition);
+					entity_player->position = v2_add(world->dashInitialPosition, v2_mulf(dashTrajectory, dashTimeProgress / world->dashFlightDuration));
 				}
 			}
 		}
@@ -338,7 +277,6 @@ int entry(int argc, char **argv)
 			entity_slug->position = v2_add(entity_slug->position, v2_mulf(v2_normalize(slugToPlayerV2), 15 * delta_time));
 		}
 
-// collision. player hit by slugs and slugs hit by projectiles
 #pragma region collision
 		Sprite *player_sprite = get_sprite(entity_player->spriteId);
 		Range2f player_bounds = range2f_make_bottom_center(player_sprite->size);
@@ -363,6 +301,35 @@ int entry(int argc, char **argv)
 				}
 				if (entity->state == ENTITYSTATE_PROJECTILE_InFlight)
 				{
+					// check for impact
+					for (int i = 0; i < MAX_ENTITY_COUNT && entity->canCollide; i++)
+					{
+						Entity *targetEntity = &world->entities[i];
+						if (!targetEntity->isValid ||
+							!targetEntity->canCollide ||
+							targetEntity->team == entity->team ||
+							targetEntity->entityLayer && entity->collisionLayer == 0)
+							continue;
+
+						Sprite *projectileSprite = get_sprite(entity->spriteId);
+						Range2f projectileBounds = range2f_make_center(projectileSprite->size);
+						projectileBounds = range2f_shift(projectileBounds, entity->position);
+						Sprite *targetEntitySprite = get_sprite(targetEntity->spriteId);
+						Range2f targetEntitySpriteBounds = range2f_make_bottom_center(targetEntitySprite->size);
+						targetEntitySpriteBounds = range2f_shift(targetEntitySpriteBounds, targetEntity->position);
+						if (range2f_AABB(targetEntitySpriteBounds, projectileBounds))
+						{
+							Vector2 projectile0ToEntity = v2_normalize(v2_sub(targetEntity->position, entity->position));
+							add_knocknack(targetEntity, entity->projectile_knockback, 0.1, projectile0ToEntity);
+							// TODO: audio player, config position in ndc, volume, mixing?.
+							play_one_audio_clip(kenney_impact_snow03);
+							entity->state = ENTITYSTATE_PROJECTILE_Impact;
+							entity->hitHighlightDurationLeft = 0.1;
+							entity->Health -= 1;
+						}
+					}
+
+					// tick
 					entity->projectile_flightLifetime_progress += delta_time;
 					float32 projectile_easing = entity->get_projectile_flight_easing(entity->projectile_flightLifetime_progress / entity->projectile_flightLifetime_total);
 					entity->velocity = v2_mulf(entity->projectile_direction, projectile_easing * entity->projectile_speed * delta_time);
@@ -387,27 +354,6 @@ int entry(int argc, char **argv)
 					add_knocknack(entity_player, 100, 0.1, slugToPlayerV2);
 					entity_player->hitHighlightDurationLeft = 0.1;
 				}
-				// slug hit by projectile
-				for (int i = 0; i < MAX_ENTITY_COUNT && entity->canCollide; i++)
-				{
-					Entity *entity_projectile = &world->entities[i];
-					if (!entity_projectile->isValid || !is_projectile(entity_projectile) || entity_projectile->state != ENTITYSTATE_PROJECTILE_InFlight)
-						continue;
-
-					Sprite *projectile0_sprite = get_sprite(entity_projectile->spriteId);
-					Range2f projectile0_bounds = range2f_make_center(projectile0_sprite->size);
-					projectile0_bounds = range2f_shift(projectile0_bounds, entity_projectile->position);
-					if (range2f_AABB(slug_bounds, projectile0_bounds))
-					{
-						Vector2 projectile0ToSlug = v2_normalize(v2_sub(entity_slug->position, entity_projectile->position));
-						add_knocknack(entity_slug, entity_projectile->projectile_knockback, 0.1, projectile0ToSlug);
-						// TODO: audio player, config position in ndc, volume, mixing?.
-						play_one_audio_clip(STR("../Assets/kenney_impact-sounds/Audio/footstep_snow_003.ogg"));
-						entity_projectile->state = ENTITYSTATE_PROJECTILE_Impact;
-						entity->hitHighlightDurationLeft = 0.1;
-						entity->Health -= 1;
-					}
-				}
 			}
 
 			// tick knockbacks
@@ -418,109 +364,9 @@ int entry(int argc, char **argv)
 		}
 #pragma endregion collision
 
-// rendering
-#pragma region rendering
-		// draw checkerboard
-		Vector2 playerTile = v2(roundf(entity_player->position.x / 10), roundf(entity_player->position.y / 10));
-		for (int i = playerTile.x - 30; i < playerTile.x + 30; i++)
-		{
-			for (int j = playerTile.y - 25; j < playerTile.y + 25; j++)
-			{
-				float32 alpha = 0.1 * (float32)abs(((j % 2) + i) % 2);
-				draw_rect(v2(i * 10, j * 10), v2(10, 10), v4(1, 0, 0, alpha));
-			}
-		}
+		// render UI
 
-		for (int i = 0; i < MAX_ENTITY_COUNT; i++)
-		{
-			Entity *entity = &world->entities[i];
-			if (!entity->isValid)
-				continue;
-
-			switch (entity->archetype)
-			{
-			case ARCHETYPE_player:
-			{
-				if (!entity->renderSprite)
-					break;
-
-				Sprite *sprite = get_sprite(entity->spriteId);
-				Matrix4 xform = m4_scalar(1.0);
-				xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0)); // bottom center
-				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
-				if (entity->state == ENTITYSTATE_PLAYER_FreeMove)
-				{
-					Draw_Quad *quad = draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
-					if (entity->hitHighlightDurationLeft > 0)
-						shader_set_highlight(quad);
-				}
-				else if (entity->state == ENTITYSTATE_PLAYER_Dash)
-				{
-					float32 dashTimeProgress = (now - dashStartedAt);
-					Vector2 spriteSize = sprite->size;
-					if (dashTimeProgress > 0 && dashTimeProgress < dashFlightDuration)
-					{
-						spriteSize = v2(spriteSize.x * 1.5, spriteSize.y * 0.5);
-						animate_v2_to_target(&spriteSize, sprite->size, delta_time, 15);
-					}
-					Draw_Quad *quad = draw_image_xform(sprite->Image, xform, spriteSize, COLOR_WHITE);
-					if (dashTimeProgress > dashHighlight1Start && dashTimeProgress < dashHighlight1Start + dashHighlightDuration)
-					{
-						shader_set_highlight(quad);
-					}
-					if (dashTimeProgress > dashHighlight2Start && dashTimeProgress < dashHighlight2Start + dashHighlightDuration)
-					{
-						shader_set_highlight(quad);
-					}
-				}
-				break;
-			}
-			case ARCHETYPE_projectile:
-			{
-				if (!entity->renderSprite)
-					break;
-
-				Sprite *sprite = get_sprite(entity->spriteId);
-				Matrix4 xform = m4_scalar(1.0);
-				xform = m4_translate(xform, v3(sprite->size.x * -0.5, sprite->size.y * -0.5, 0)); // center
-				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
-				if (entity->state == ENTITYSTATE_PROJECTILE_Impact)
-				{
-					Sprite *sheet_sprite = get_sprite(SPRITE_projectile0_sheet);
-					float32 animation_progress = entity->projectile_impactLifetime_progress / entity->projectile_impactLifetime_total;
-					draw_image_xform_sheet_animated(sheet_sprite, xform, animation_progress);
-					break;
-				}
-				draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
-				break;
-			}
-
-			default:
-			{
-				if (!entity->renderSprite)
-					break;
-
-				Sprite *sprite = get_sprite(entity->spriteId);
-				Matrix4 xform = m4_scalar(1.0);
-				xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0));
-				xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
-
-				Draw_Quad *quad = draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
-				if (entity->hitHighlightDurationLeft > 0)
-					shader_set_highlight(quad);
-
-				// draw hp bar
-				Sprite *healthBarSprite = get_sprite(SPRITE_rectangle);
-				xform = m4_translate(xform, v3(0, -healthBarSprite->size.y - 0.5, 0));
-				const float healthPercentage = entity->Health / entity->MaxHealth;
-				draw_rect_xform(xform, v2(healthBarSprite->size.x, healthBarSprite->size.y), COLOR_WHITE);
-				// draw_image_xform(healthBarSprite->Image, xform, healthBarSprite->size, COLOR_WHITE);
-				xform = m4_translate(xform, v3(0.1, 0.1, 0));
-				draw_rect_xform(xform, v2((healthBarSprite->size.x - 0.2) * healthPercentage, healthBarSprite->size.y - 0.2), COLOR_RED);
-			}
-			}
-		}
-#pragma endregion rendering
+		RenderWorld(world, entity_player->position, now, delta_time);
 
 		os_update();
 		gfx_update();
@@ -543,6 +389,103 @@ int entry(int argc, char **argv)
 	return 0;
 }
 
+void RenderWorld(World *world, Vector2 entity_player_position, float64 now, float64 delta_time)
+{
+	// draw checkerboard
+	Vector2 playerTile = v2(roundf(entity_player_position.x / 10), roundf(entity_player_position.y / 10));
+	for (int i = playerTile.x - 30; i < playerTile.x + 30; i++)
+	{
+		for (int j = playerTile.y - 25; j < playerTile.y + 25; j++)
+		{
+			float32 alpha = 0.1 * (float32)abs(((j % 2) + i) % 2);
+			draw_rect(v2(i * 10, j * 10), v2(10, 10), v4(1, 0, 0, alpha));
+		}
+	}
+
+	for (int i = 0; i < MAX_ENTITY_COUNT; i++)
+	{
+		Entity *entity = &world->entities[i];
+		if (!entity->isValid)
+			continue;
+
+		switch (entity->archetype)
+		{
+		case ARCHETYPE_player:
+		{
+			if (!entity->renderSprite)
+				break;
+
+			Sprite *sprite = get_sprite(entity->spriteId);
+			Matrix4 xform = m4_scalar(1.0);
+			xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0)); // bottom center
+			xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
+			if (entity->state == ENTITYSTATE_PLAYER_FreeMove)
+			{
+				Draw_Quad *quad = draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
+				if (entity->hitHighlightDurationLeft > 0)
+					shader_set_highlight(quad);
+			}
+			else if (entity->state == ENTITYSTATE_PLAYER_Dash)
+			{
+				float32 dashTimeProgress = (now - world->dashStartedAt);
+				Vector2 spriteSize = sprite->size;
+				if (dashTimeProgress > 0 && dashTimeProgress < world->dashFlightDuration)
+				{
+					spriteSize = v2(spriteSize.x * 1.5, spriteSize.y * 0.5);
+					animate_v2_to_target(&spriteSize, sprite->size, delta_time, 15);
+				}
+				Draw_Quad *quad = draw_image_xform(sprite->Image, xform, spriteSize, COLOR_WHITE);
+				if (dashTimeProgress > world->dashHighlight1Start && dashTimeProgress < world->dashHighlight1Start + world->dashHighlightDuration)
+				{
+					shader_set_highlight(quad);
+				}
+				if (dashTimeProgress > world->dashHighlight2Start && dashTimeProgress < world->dashHighlight2Start + world->dashHighlightDuration)
+				{
+					shader_set_highlight(quad);
+				}
+			}
+			DrawEntityHealthBar(entity, xform);
+			break;
+		}
+		case ARCHETYPE_projectile:
+		{
+			if (!entity->renderSprite)
+				break;
+
+			Sprite *sprite = get_sprite(entity->spriteId);
+			Matrix4 xform = m4_scalar(1.0);
+			xform = m4_translate(xform, v3(sprite->size.x * -0.5, sprite->size.y * -0.5, 0)); // center
+			xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
+			if (entity->state == ENTITYSTATE_PROJECTILE_Impact)
+			{
+				Sprite *sheet_sprite = get_sprite(SPRITE_projectile0_sheet);
+				float32 animation_progress = entity->projectile_impactLifetime_progress / entity->projectile_impactLifetime_total;
+				draw_image_xform_sheet_animated(sheet_sprite, xform, animation_progress);
+				break;
+			}
+			draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
+			break;
+		}
+
+		default:
+		{
+			if (!entity->renderSprite)
+				break;
+
+			Sprite *sprite = get_sprite(entity->spriteId);
+			Matrix4 xform = m4_scalar(1.0);
+			xform = m4_translate(xform, v3(sprite->size.x * -0.5, 0, 0));
+			xform = m4_translate(xform, v3(entity->position.x, entity->position.y, 0));
+
+			Draw_Quad *quad = draw_image_xform(sprite->Image, xform, sprite->size, COLOR_WHITE);
+			if (entity->hitHighlightDurationLeft > 0)
+				shader_set_highlight(quad);
+			DrawEntityHealthBar(entity, xform);
+		}
+		}
+	}
+}
+
 void shader_set_highlight(Draw_Quad *quad)
 {
 	quad->userdata[0].x = SHADER_EFFECT_COLORCHANGE;
@@ -557,4 +500,22 @@ Draw_Quad *draw_image_xform_sheet_animated(Sprite *sheet_sprite, Matrix4 xform, 
 	quad->uv.x2 = uvs.end.x;
 	quad->uv.y2 = uvs.end.y;
 	return quad;
+}
+
+void DrawHealthBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage)
+{
+	draw_rect_xform(barTransform, v2(barSize.x, barSize.y), COLOR_WHITE);
+	barTransform = m4_translate(barTransform, v3(padding, padding, 0));
+	draw_rect_xform(barTransform, v2((barSize.x - padding * 2) * fillPercentage, barSize.y - padding * 2), COLOR_RED);
+}
+
+void DrawEntityHealthBar(Entity *entity, Matrix4 xform)
+{
+	Sprite *sprite = get_sprite(entity->spriteId);
+	float32 barHeight = max(sprite->size.y / 4, 2);
+	Vector2 barSize = v2(sprite->size.x - 0.1, barHeight);
+	float32 border = max(sprite->size.y / 25, 0.1);
+	xform = m4_translate(xform, v3(0, -barSize.y - 0.5, 0));
+	const float healthPercentage = entity->Health / entity->MaxHealth;
+	DrawHealthBar(xform, barSize, border, healthPercentage);
 }

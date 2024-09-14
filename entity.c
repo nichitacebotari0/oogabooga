@@ -7,10 +7,24 @@ typedef enum EntityArchetype
     ARCHETYPE_brownRock = 4,
 } EntityArchetype;
 
+typedef enum Team
+{
+    TEAM_1 = 1,
+    TEAM_2 = 2,
+    TEAM_3 = 3
+} Team;
+
+typedef enum CollisionLayer
+{
+    COLLISION_player = 1 << 0,
+    COLLISION_enemy = 1 << 1,
+    COLLISION_projectile = 1 << 2,
+    COLLISION_environment = 1 << 3,
+} CollisionLayer;
+
 typedef enum SpriteID
 {
     SPRITE_nil,
-    SPRITE_rectangle,
     SPRITE_player,
     SPRITE_slug,
     SPRITE_projectile0,
@@ -46,6 +60,9 @@ typedef struct Entity
 {
     bool isValid;
     EntityArchetype archetype;
+    Team team;
+    CollisionLayer collisionLayer;
+    CollisionLayer entityLayer;
     Vector2 position;
     Vector2 velocity; // dPosition
     Vector2 facingDirection;
@@ -112,6 +129,9 @@ bool is_projectile(Entity *entity)
 
 void setup_player(Entity *entity)
 {
+    entity->team = TEAM_1;
+    entity->entityLayer = COLLISION_player;
+    entity->collisionLayer = COLLISION_environment | COLLISION_enemy | COLLISION_projectile;
     entity->Health = 100;
     entity->MaxHealth = 100;
     entity->archetype = ARCHETYPE_player;
@@ -151,6 +171,9 @@ void player_stateTransition(Entity *entity, EntityState targetState)
 
 void setup_slug(Entity *entity)
 {
+    entity->team = TEAM_2;
+    entity->entityLayer = COLLISION_enemy;
+    entity->collisionLayer = COLLISION_environment | COLLISION_player | COLLISION_projectile;
     entity->Health = 100;
     entity->MaxHealth = 100;
     entity->archetype = ARCHETYPE_slug;
@@ -159,29 +182,33 @@ void setup_slug(Entity *entity)
     entity->canCollide = true;
 }
 
-void setup_projectile0(Entity *projectile, SpriteID spriteId, Vector2 position, Vector2 projectile_direction,
+void setup_projectile0(Entity *entity, SpriteID spriteId, Vector2 position, Vector2 projectile_direction,
                        float32 speed, float32 knockback_strengh, easing_function *flight_easing_func,
-                       float32 flightLifetime, float32 impactLifetime)
+                       float32 flightLifetime, float32 impactLifetime, Team team)
 {
-    projectile->archetype = ARCHETYPE_projectile;
-    projectile->isValid = true;
-    projectile->renderSprite = true;
-    projectile->canCollide = true;
-    projectile->spriteId = spriteId;
-    projectile->state = ENTITYSTATE_PROJECTILE_InFlight;
+    entity->team = team;
+    entity->entityLayer = COLLISION_projectile;
+    entity->collisionLayer = COLLISION_environment | COLLISION_player | COLLISION_enemy;
+    entity->archetype = ARCHETYPE_projectile;
+    entity->isValid = true;
+    entity->renderSprite = true;
+    entity->canCollide = true;
+    entity->spriteId = spriteId;
+    entity->state = ENTITYSTATE_PROJECTILE_InFlight;
 
-    projectile->position = position;
-    projectile->projectile_direction = v2_normalize(projectile_direction);
-    projectile->projectile_flightLifetime_total = flightLifetime;
-    projectile->projectile_flightLifetime_progress = 0;
-    projectile->projectile_impactLifetime_total = impactLifetime;
-    projectile->projectile_impactLifetime_progress = 0;
-    projectile->get_projectile_flight_easing = flight_easing_func;
+    entity->position = position;
+    entity->projectile_direction = v2_normalize(projectile_direction);
+    entity->projectile_flightLifetime_total = flightLifetime;
+    entity->projectile_flightLifetime_progress = 0;
+    entity->projectile_impactLifetime_total = impactLifetime;
+    entity->projectile_impactLifetime_progress = 0;
+    entity->get_projectile_flight_easing = flight_easing_func;
 
-    projectile->projectile_speed = speed;
-    projectile->projectile_knockback = knockback_strengh;
+    entity->projectile_speed = speed;
+    entity->projectile_knockback = knockback_strengh;
 }
 
+// returns between 0 and 1
 float32 get_lifetime_progress(Entity *entity)
 {
     float32 lifetime_progress = (entity->projectile_flightLifetime_total - entity->projectile_flightLifetime_progress) / entity->projectile_flightLifetime_total;
@@ -244,4 +271,21 @@ SpriteUV get_sprite_animation_uv(Sprite *sprite, float32 animation_progress)
         .end = {.x = ((float32)(anim_sheet_pos_x + sprite->anim_frame_width) / (float32)anim_sheet->width), .y = ((float32)(anim_sheet_pos_y + sprite->anim_frame_height) / (float32)anim_sheet->height)}};
 
     return result;
+}
+
+
+void add_knocknack(Entity *entity, float32 strengh, float32 duration, Vector2 direction)
+{
+	if (fabsf(direction.x) < 0.01 && fabsf(direction.y) < 0.01)
+		return;
+	entity->knockback_strengh = strengh;
+	entity->knockback_durationLeft = duration;
+	entity->knockback_direction = v2_normalize(direction);
+}
+
+void tick_knockback(Entity *entity, float64 delta_time)
+{
+	entity->position = v2_add(entity->position, v2_mulf(entity->knockback_direction, entity->knockback_strengh * delta_time));
+	entity->knockback_durationLeft -= delta_time;
+	entity->knockback_durationLeft = max(0, entity->knockback_durationLeft);
 }
