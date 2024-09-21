@@ -18,8 +18,14 @@ typedef struct GameState
 struct World
 {
     Entity entities[MAX_ENTITY_COUNT];
+    // todo: this should be per "room"/"zone"
+    uint16 enemiesMax;
+    uint16 enemiesSpawned;
+    float64 spawnCooldown;
+    float64 spawnCooldownLeft;
 
     // im super lazy so player state/config goes here
+    // todo: i will make a separate struct for player state someday
     float64 cameraZoom;
     Vector2 cameraPosition;
     // lmb
@@ -43,6 +49,11 @@ struct World
 
 void setup_world(World *world)
 {
+    world->enemiesMax = 25;
+    world->enemiesSpawned = 0;
+    world->spawnCooldown = 3;
+    world->spawnCooldownLeft = 0;
+
     world->cameraZoom = 6.0f;
     world->cameraPosition = v2(0, 0);
     // lmb

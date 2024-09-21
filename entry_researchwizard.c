@@ -29,7 +29,7 @@ Entity *entity_create()
 		entity->isValid = true;
 		return entity;
 	}
-	assert(true, "no entity found");
+	assert(false, "no entity found");
 	return null;
 }
 
@@ -145,8 +145,6 @@ int entry(int argc, char **argv)
 
 	Entity *entity_player = entity_create();
 	setup_player(entity_player);
-	Entity *entity_slug = entity_create();
-	setup_slug(entity_slug);
 
 	// game loop
 	const float32 second = 1;
@@ -225,10 +223,8 @@ int entry(int argc, char **argv)
 			Entity *entity_projectile0 = entity_create();
 			setup_projectile0(entity_projectile0, SPRITE_projectile0, projectile_spawn_pos, playerToMouse, 150, 50, easeInQuartReverse, 1.1, 0.2, TEAM_1);
 		}
-		if (world->lmbCooldownLeft > 0)
-		{
-			world->lmbCooldownLeft = max(0, world->lmbCooldownLeft - delta_time);
-		}
+		world->lmbCooldownLeft = max(0, world->lmbCooldownLeft - delta_time);
+
 		// dash ability
 		if (is_key_down(KEY_SHIFT) && world->dashCooldownLeft <= 0)
 		{
@@ -280,15 +276,24 @@ int entry(int argc, char **argv)
 			}
 		}
 
-		// tick slug
-		float64 detectionDistance = 50;
-		Vector2 slugToPlayerV2 = v2_sub(entity_player->position, entity_slug->position);
-		if (v2_length(slugToPlayerV2) <= detectionDistance) // could compare squared, but lazy
+		// spawn slugs
+		world->spawnCooldownLeft -= delta_time;
+		if (world->spawnCooldownLeft <= 0 && world->enemiesSpawned < world->enemiesMax)
 		{
-			entity_slug->position = v2_add(entity_slug->position, v2_mulf(v2_normalize(slugToPlayerV2), 15 * delta_time));
+			Entity *entity_slug = entity_create();
+			setup_slug(entity_slug);
+			entity_slug->position.x = get_random_float32_in_range(entity_player->position.x - 50, entity_player->position.x + 50);
+			entity_slug->position.y = get_random_float32_in_range(entity_player->position.y - 50, entity_player->position.y + 50);
+			Vector2 playerToSlugSpawn = v2_sub(entity_slug->position, entity_player->position);
+			if (v2_length(playerToSlugSpawn) < 10)
+			{
+				entity_slug->position = v2_add(entity_slug->position, v2_mulf(playerToSlugSpawn, 10));
+			}
+			world->enemiesSpawned++;
+			world->spawnCooldownLeft = world->spawnCooldown;
 		}
 
-#pragma region collision
+#pragma region physicsTick
 		Sprite *player_sprite = get_sprite(entity_player->spriteId);
 		Range2f player_bounds = range2f_make_bottom_center(player_sprite->size);
 		player_bounds = range2f_shift(player_bounds, entity_player->position);
@@ -332,6 +337,8 @@ int entry(int argc, char **argv)
 						{
 							Vector2 projectile0ToEntity = v2_normalize(v2_sub(targetEntity->position, entity->position));
 							apply_damage(targetEntity, 10, now);
+							if (targetEntity->Health <= 0)
+								entity_destroy(targetEntity);
 							add_knocknack(targetEntity, entity->projectile_knockback, 0.1, projectile0ToEntity);
 							// TODO: audio player, config position in ndc, volume, mixing?.
 							play_one_audio_clip(kenney_impact_snow03);
@@ -354,6 +361,14 @@ int entry(int argc, char **argv)
 
 			if (entity->archetype == ARCHETYPE_slug)
 			{
+				// tick slugs
+				float64 detectionDistance = 500;
+				Vector2 slugToPlayerV2 = v2_sub(entity_player->position, entity->position);
+				if (v2_length(slugToPlayerV2) <= detectionDistance) // could compare squared, but lazy
+				{
+					entity->position = v2_add(entity->position, v2_mulf(v2_normalize(slugToPlayerV2), 15 * delta_time));
+				}
+
 				Sprite *slug_sprite = get_sprite(entity->spriteId);
 				Range2f slug_bounds = range2f_make_bottom_center(slug_sprite->size);
 				slug_bounds = range2f_shift(slug_bounds, entity->position);
