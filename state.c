@@ -10,7 +10,9 @@ typedef enum GameMode
 typedef struct GameState
 {
     GameMode GameMode;
-    World *World; // just some c bs i have to do
+    World *World;
+    Matrix4 worldProjection;
+    Matrix4 world_camera_xform;
 } GameState;
 
 struct World

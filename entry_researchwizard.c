@@ -6,6 +6,7 @@
 #include "state.c"
 #include "utils.c"
 
+GameState *gameState = 0;
 World *world = 0;
 Sprite sprites[SPRITE_MAX];
 Sprite *get_sprite(SpriteID id)
@@ -47,9 +48,12 @@ typedef struct Shader_ConstantsBuffer
 } Shader_ConstantsBuffer;
 void shader_set_highlight(Draw_Quad *quad);
 Draw_Quad *draw_image_xform_sheet_animated(Sprite *sheet_sprite, Matrix4 xform, float32 animation_progress);
-void DrawHealthBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage);
+void DrawProgressBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage, Vector4 outlineColor, Vector4 fillColor);
 void DrawEntityHealthBar(Entity *entity, Matrix4 xform);
 void RenderWorld(World *world, Vector2 entity_player_position, float64 now, float64 delta_time);
+void set_screen_space();
+void set_world_space();
+Vector2 get_screenPixels(Vector2 input, Vector2 windowSize);
 
 #ifdef debug
 void debug_position(Vector2 entityPosition, Gfx_Font *font, const u32 font_height, Vector2 *printPosition, string prefix)
@@ -134,6 +138,11 @@ int entry(int argc, char **argv)
 	memset(world, 0, sizeof(World));
 	setup_world(world);
 
+	gameState = alloc(get_heap_allocator(), sizeof(GameState));
+	memset(gameState, 0, sizeof(GameState));
+	gameState->World = world;
+	gameState->GameMode = GameMode_MainMenu;
+
 	Entity *entity_player = entity_create();
 	setup_player(entity_player);
 	Entity *entity_slug = entity_create();
@@ -179,6 +188,8 @@ int entry(int argc, char **argv)
 		Vector4 mouse_world_pos = v4(mouse_ndc_x, mouse_ndc_y, 0, 1);
 		mouse_world_pos = m4_transform(clipToWorld, mouse_world_pos);
 		Vector2 playerToMouse = v2_normalize(v2_sub(v2(mouse_world_pos.x, mouse_world_pos.y), entity_player->position));
+		gameState->worldProjection = draw_frame.projection;
+		gameState->world_camera_xform = draw_frame.camera_xform;
 
 		// input reading
 		if (is_key_just_pressed(KEY_ESCAPE))
@@ -320,12 +331,12 @@ int entry(int argc, char **argv)
 						if (range2f_AABB(targetEntitySpriteBounds, projectileBounds))
 						{
 							Vector2 projectile0ToEntity = v2_normalize(v2_sub(targetEntity->position, entity->position));
+							apply_damage(targetEntity, 10, now);
 							add_knocknack(targetEntity, entity->projectile_knockback, 0.1, projectile0ToEntity);
 							// TODO: audio player, config position in ndc, volume, mixing?.
 							play_one_audio_clip(kenney_impact_snow03);
 							entity->state = ENTITYSTATE_PROJECTILE_Impact;
 							entity->hitHighlightDurationLeft = 0.1;
-							entity->Health -= 1;
 						}
 					}
 
@@ -351,6 +362,7 @@ int entry(int argc, char **argv)
 				{
 					// todo: player take damage
 					Vector2 player_knockbackv2 = slugToPlayerV2;
+					apply_damage(entity_player, 5, now);
 					add_knocknack(entity_player, 100, 0.1, slugToPlayerV2);
 					entity_player->hitHighlightDurationLeft = 0.1;
 				}
@@ -364,9 +376,24 @@ int entry(int argc, char **argv)
 		}
 #pragma endregion collision
 
-		// render UI
-
 		RenderWorld(world, entity_player->position, now, delta_time);
+		// render HUD
+		set_screen_space();
+		for (int i = 0; i < 1; (i = 1, set_world_space()))
+		{
+			Vector2 windowSize = v2(window.width, window.height);
+			// all sizes in ndc, then multiplied by screen width
+			Vector2 screenPadding = get_screenPixels(v2(1 / 100.f, 1 / 100.f), windowSize);
+			Vector2 dashBarSize = get_screenPixels(v2(1 / 24.f * 3, 1 / 24.f), windowSize);
+
+			// dash cooldown bar
+			float64 heightDrawn = windowSize.y - screenPadding.y;
+			heightDrawn -= dashBarSize.y;
+			Matrix4 xform = m4_scalar(1);
+			xform = m4_translate(xform, v3(screenPadding.x, heightDrawn, 0));
+			float64 dashReadyProgress = 1 - world->dashCooldownLeft / world->dashCooldown;
+			DrawProgressBar(xform, dashBarSize, 0.1f, dashReadyProgress, COLOR_WHITE, (dashReadyProgress >= 1) ? COLOR_GREEN : COLOR_BLUE);
+		}
 
 		os_update();
 		gfx_update();
@@ -502,11 +529,11 @@ Draw_Quad *draw_image_xform_sheet_animated(Sprite *sheet_sprite, Matrix4 xform, 
 	return quad;
 }
 
-void DrawHealthBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage)
+void DrawProgressBar(Matrix4 barTransform, Vector2 barSize, float32 padding, float32 fillPercentage, Vector4 outlineColor, Vector4 fillColor)
 {
-	draw_rect_xform(barTransform, v2(barSize.x, barSize.y), COLOR_WHITE);
+	draw_rect_xform(barTransform, v2(barSize.x, barSize.y), outlineColor);
 	barTransform = m4_translate(barTransform, v3(padding, padding, 0));
-	draw_rect_xform(barTransform, v2((barSize.x - padding * 2) * fillPercentage, barSize.y - padding * 2), COLOR_RED);
+	draw_rect_xform(barTransform, v2((barSize.x - padding * 2) * fillPercentage, barSize.y - padding * 2), fillColor);
 }
 
 void DrawEntityHealthBar(Entity *entity, Matrix4 xform)
@@ -517,5 +544,22 @@ void DrawEntityHealthBar(Entity *entity, Matrix4 xform)
 	float32 border = max(sprite->size.y / 25, 0.1);
 	xform = m4_translate(xform, v3(0, -barSize.y - 0.5, 0));
 	const float healthPercentage = entity->Health / entity->MaxHealth;
-	DrawHealthBar(xform, barSize, border, healthPercentage);
+	DrawProgressBar(xform, barSize, border, healthPercentage, COLOR_WHITE, COLOR_RED);
+}
+
+void set_screen_space()
+{
+	draw_frame.camera_xform = m4_scalar(1.0);
+	draw_frame.projection = m4_make_orthographic_projection(0.0, window.width, 0.0, window.height, -1, 10);
+}
+void set_world_space()
+{
+	draw_frame.projection = gameState->worldProjection;
+	draw_frame.camera_xform = gameState->world_camera_xform;
+}
+
+Vector2 get_screenPixels(Vector2 ndc, Vector2 windowSize)
+{
+	// todo: figure out widths vs pixelwidth vs point width
+	return v2(ndc.x * windowSize.x, ndc.y * windowSize.y);
 }

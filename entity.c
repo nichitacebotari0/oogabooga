@@ -69,6 +69,8 @@ typedef struct Entity
     EntityState state;
     float32 Health;
     float32 MaxHealth;
+    float32 lastTimeTookDamage;
+    float32 damageCooldown;
 
     // projectile stuff
     Vector2 projectile_direction;
@@ -140,6 +142,8 @@ void setup_player(Entity *entity)
     entity->spriteId = SPRITE_player;
     entity->state = ENTITYSTATE_PLAYER_FreeMove;
     entity->canCollide = true;
+    entity->lastTimeTookDamage = 0;
+    entity->damageCooldown = 0.1;
 }
 
 void player_stateTransition(Entity *entity, EntityState targetState)
@@ -273,19 +277,27 @@ SpriteUV get_sprite_animation_uv(Sprite *sprite, float32 animation_progress)
     return result;
 }
 
-
 void add_knocknack(Entity *entity, float32 strengh, float32 duration, Vector2 direction)
 {
-	if (fabsf(direction.x) < 0.01 && fabsf(direction.y) < 0.01)
-		return;
-	entity->knockback_strengh = strengh;
-	entity->knockback_durationLeft = duration;
-	entity->knockback_direction = v2_normalize(direction);
+    if (fabsf(direction.x) < 0.01 && fabsf(direction.y) < 0.01)
+        return;
+    entity->knockback_strengh = strengh;
+    entity->knockback_durationLeft = duration;
+    entity->knockback_direction = v2_normalize(direction);
 }
 
 void tick_knockback(Entity *entity, float64 delta_time)
 {
-	entity->position = v2_add(entity->position, v2_mulf(entity->knockback_direction, entity->knockback_strengh * delta_time));
-	entity->knockback_durationLeft -= delta_time;
-	entity->knockback_durationLeft = max(0, entity->knockback_durationLeft);
+    entity->position = v2_add(entity->position, v2_mulf(entity->knockback_direction, entity->knockback_strengh * delta_time));
+    entity->knockback_durationLeft -= delta_time;
+    entity->knockback_durationLeft = max(0, entity->knockback_durationLeft);
+}
+
+void apply_damage(Entity *entity, float32 damage, float32 now)
+{
+    if (now - entity->lastTimeTookDamage > entity->damageCooldown)
+    {
+        entity->lastTimeTookDamage = now;
+        entity->Health = max(0, entity->Health - damage);
+    }
 }
